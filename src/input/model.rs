@@ -76,6 +76,11 @@ pub struct TerminalKey {
     pub kind: crossterm::event::KeyEventKind,
     pub repeat_count: u16,
     pub shifted_codepoint: Option<u32>,
+    /// US-layout codepoint from a Kitty `keycode:shifted:base` report.
+    ///
+    /// Korean 2-set Hangul mode reports the jamo as `keycode` (`ㅁ`) and the
+    /// physical ASCII key as this field (`a`).
+    pub base_layout_codepoint: Option<u32>,
     pub generated_text: Option<String>,
     physical_identity_hint: bool,
     windows_dead_key: bool,
@@ -90,6 +95,7 @@ impl TerminalKey {
             kind: crossterm::event::KeyEventKind::Press,
             repeat_count: 1,
             shifted_codepoint: None,
+            base_layout_codepoint: None,
             generated_text: None,
             physical_identity_hint: false,
             windows_dead_key: false,
@@ -123,6 +129,34 @@ impl TerminalKey {
     pub fn with_shifted_codepoint(mut self, shifted_codepoint: u32) -> Self {
         self.shifted_codepoint = Some(shifted_codepoint);
         self
+    }
+
+    pub fn with_base_layout_codepoint(mut self, base_layout_codepoint: u32) -> Self {
+        self.base_layout_codepoint = Some(base_layout_codepoint);
+        self
+    }
+
+    /// ASCII key on the same physical key while Ctrl is held in Korean 2-set
+    /// Hangul mode: Ctrl+ㅁ → `a`, Ctrl+ㅓ → `j`. Derived from the reported
+    /// jamo, or from the Kitty base-layout codepoint for layouts the jamo
+    /// table does not cover. Returns None for plain Hangul typing and for
+    /// already-ASCII keys, so those pass through unchanged.
+    pub(crate) fn ctrl_ascii_alias(&self) -> Option<char> {
+        if !self.modifiers.contains(KeyModifiers::CONTROL) {
+            return None;
+        }
+        let KeyCode::Char(ch) = self.code else {
+            return None;
+        };
+        if let Some(ascii) = dubeolsik_jamo_to_ascii(ch) {
+            return Some(ascii);
+        }
+        if ch.is_ascii() {
+            return None;
+        }
+        let base = self.base_layout_codepoint.and_then(char::from_u32)?;
+        base.is_ascii_alphabetic()
+            .then(|| base.to_ascii_lowercase())
     }
 
     pub(crate) fn with_generated_text(mut self, text: Option<String>) -> Self {
@@ -249,6 +283,40 @@ impl TerminalKey {
     pub fn as_key_event(&self) -> KeyEvent {
         KeyEvent::new_with_kind(self.code, self.modifiers, self.kind)
     }
+}
+
+/// 두벌식 compatibility jamo for one physical key, including the shifted
+/// double consonants and compound vowels.
+pub(crate) fn dubeolsik_jamo_to_ascii(ch: char) -> Option<char> {
+    Some(match ch {
+        'ㅂ' | 'ㅃ' => 'q',
+        'ㅈ' | 'ㅉ' => 'w',
+        'ㄷ' | 'ㄸ' => 'e',
+        'ㄱ' | 'ㄲ' => 'r',
+        'ㅅ' | 'ㅆ' => 't',
+        'ㅛ' => 'y',
+        'ㅕ' => 'u',
+        'ㅑ' => 'i',
+        'ㅐ' | 'ㅒ' => 'o',
+        'ㅔ' | 'ㅖ' => 'p',
+        'ㅁ' => 'a',
+        'ㄴ' => 's',
+        'ㅇ' => 'd',
+        'ㄹ' => 'f',
+        'ㅎ' => 'g',
+        'ㅗ' => 'h',
+        'ㅓ' => 'j',
+        'ㅏ' => 'k',
+        'ㅣ' => 'l',
+        'ㅋ' => 'z',
+        'ㅌ' => 'x',
+        'ㅊ' => 'c',
+        'ㅍ' => 'v',
+        'ㅠ' => 'b',
+        'ㅜ' => 'n',
+        'ㅡ' => 'm',
+        _ => return None,
+    })
 }
 
 impl From<KeyEvent> for TerminalKey {

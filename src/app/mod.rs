@@ -3312,4 +3312,30 @@ mod tests {
             "Working→Idle should still apply after temporary queue pressure"
         );
     }
+
+    #[test]
+    fn ctrl_hangul_jamo_matches_ctrl_prefix_key() {
+        // Ctrl+B prefix in Hangul mode arrives as Ctrl+ㅠ (physical B key),
+        // with or without the kitty base-layout alternate.
+        let prefix = crate::config::LiveKeybindConfig {
+            prefix: vec![(
+                KeyCode::Char('b'),
+                KeyModifiers::CONTROL,
+            )],
+            keybinds: crate::config::Keybinds::default(),
+        };
+        assert!(prefix.matches_prefix(&crate::input::TerminalKey::new(
+            KeyCode::Char('ㅠ'),
+            KeyModifiers::CONTROL,
+        )));
+        assert!(prefix.matches_prefix(
+            &crate::input::TerminalKey::new(KeyCode::Char('ㅠ'), KeyModifiers::CONTROL)
+                .with_base_layout_codepoint(u32::from(b'b'))
+        ));
+        // Plain Hangul typing must not trigger the prefix.
+        assert!(!prefix.matches_prefix(&crate::input::TerminalKey::new(
+            KeyCode::Char('ㅠ'),
+            KeyModifiers::empty(),
+        )));
+    }
 }

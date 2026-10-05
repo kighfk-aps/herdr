@@ -33,6 +33,12 @@ fn parse_kitty_key_sequence(data: &str) -> Option<TerminalKey> {
         .next()
         .filter(|field| !field.is_empty())
         .and_then(|field| field.parse::<u32>().ok());
+    // Kitty `keycode:shifted:base`. The third field is the US layout key and
+    // stays empty when the terminal does not report alternate keys.
+    let base_layout_codepoint = key_fields
+        .next()
+        .filter(|field| !field.is_empty())
+        .and_then(|field| field.parse::<u32>().ok());
 
     let code = kitty_codepoint_to_keycode(codepoint)?;
     let associated_text = match associated_text {
@@ -57,6 +63,9 @@ fn parse_kitty_key_sequence(data: &str) -> Option<TerminalKey> {
     let mut key = TerminalKey::new(code, modifiers).with_kind(kind);
     if let Some(shifted_codepoint) = shifted_codepoint {
         key = key.with_shifted_codepoint(shifted_codepoint);
+    }
+    if let Some(base_layout_codepoint) = base_layout_codepoint {
+        key = key.with_base_layout_codepoint(base_layout_codepoint);
     }
     Some(key.with_generated_text(associated_text))
 }
@@ -666,6 +675,21 @@ mod tests {
                 None,
             );
         }
+    }
+
+    #[test]
+    fn parse_kitty_ctrl_hangul_keeps_jamo_and_base_layout() {
+        let key = parse_terminal_key_sequence("\x1b[12609::97;5u").unwrap();
+        assert_eq!(key.code, KeyCode::Char('ㅁ'));
+        assert_eq!(key.modifiers, KeyModifiers::CONTROL);
+        assert_eq!(key.kind, crossterm::event::KeyEventKind::Press);
+        assert_eq!(key.shifted_codepoint, None);
+        assert_eq!(key.base_layout_codepoint, Some(u32::from(b'a')));
+
+        let without_base = parse_terminal_key_sequence("\x1b[12609;5u").unwrap();
+        assert_eq!(without_base.code, KeyCode::Char('ㅁ'));
+        assert_eq!(without_base.modifiers, KeyModifiers::CONTROL);
+        assert_eq!(without_base.base_layout_codepoint, None);
     }
 
     #[test]

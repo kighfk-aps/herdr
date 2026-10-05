@@ -253,6 +253,12 @@ fn try_encode_csi_u(key: &TerminalKey, flags: u16) -> Option<Vec<u8>> {
 
     let (codepoint, alternate_shifted) = match key.code {
         KeyCode::Char(c) => {
+            // Hangul mode reports the jamo for the physical key (Ctrl+ㅓ is
+            // the Ctrl+J key). Encode the ASCII alias so the pane's child
+            // receives the control chord it expects.
+            let c = key
+                .ctrl_ascii_alias()
+                .unwrap_or(c);
             let base = canonical_kitty_char(c, mods);
             let shifted = alternate_shifted_codepoint(key, flags);
             (base as u32, shifted)
@@ -515,6 +521,10 @@ fn encode_legacy_inner(key: TerminalKey) -> Vec<u8> {
     match key.code {
         KeyCode::Char(ch) => {
             if key.modifiers.contains(KeyModifiers::CONTROL) {
+                // Hangul mode reports the jamo for the physical key (Ctrl+ㅓ is
+                // the Ctrl+J key). Encode the ASCII alias so the pane's child
+                // receives the control byte it expects.
+                let ch = key.ctrl_ascii_alias().unwrap_or(ch);
                 let upper = ch.to_ascii_uppercase();
                 match upper {
                     'A'..='Z' => vec![upper as u8 - 64],
@@ -634,6 +644,59 @@ mod tests {
     fn legacy_ctrl_c() {
         let key = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         assert_eq!(encode_key(key, KeyboardProtocol::Legacy), vec![3]);
+    }
+
+    #[test]
+    fn legacy_ctrl_hangul_jamo_encodes_ascii_control_byte() {
+        // Ctrl+ㅓ is the Ctrl+J key in Hangul mode → line feed byte.
+        let key = TerminalKey::new(KeyCode::Char('ㅓ'), KeyModifiers::CONTROL);
+        assert_eq!(
+            encode_terminal_key(key.clone(), KeyboardProtocol::Legacy),
+            vec![0x0a]
+        );
+
+        // Ctrl+ㅕ is the Ctrl+U key → clear-line byte.
+        let key = TerminalKey::new(KeyCode::Char('ㅕ'), KeyModifiers::CONTROL);
+        assert_eq!(
+            encode_terminal_key(key.clone(), KeyboardProtocol::Legacy),
+            vec![0x15]
+        );
+
+        // Shifted double consonant: Ctrl+Shift+ㄲ is Ctrl+Shift+R. Both
+        // collapse to the same C0 byte, so legacy keeps the plain C0 byte.
+        let key = TerminalKey::new(
+            KeyCode::Char('ㄲ'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        );
+        assert_eq!(
+            encode_terminal_key(key.clone(), KeyboardProtocol::Legacy),
+            vec![0x12]
+        );
+    }
+
+    #[test]
+    fn legacy_plain_hangul_char_passes_through_unchanged() {
+        // Plain Hangul typing (no Ctrl) must reach the pane as UTF-8 jamo.
+        let key = TerminalKey::new(KeyCode::Char('ㅓ'), KeyModifiers::empty());
+        assert_eq!(
+            encode_terminal_key(key, KeyboardProtocol::Legacy),
+            "ㅓ".as_bytes().to_vec()
+        );
+    }
+
+    #[test]
+    fn kitty_ctrl_hangul_jamo_encodes_ascii_csi_u() {
+        // Ctrl+ㅓ with kitty protocol → CSI u for ASCII j (106).
+        let key = TerminalKey::new(KeyCode::Char('ㅓ'), KeyModifiers::CONTROL);
+        assert_eq!(
+            encode_terminal_key(
+                key,
+                KeyboardProtocol::Kitty {
+                    flags: KITTY_FLAG_REPORT_ALTERNATE_KEYS
+                }
+            ),
+            b"\x1b[106;5u".to_vec()
+        );
     }
 
     #[test]

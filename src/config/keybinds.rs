@@ -1410,7 +1410,16 @@ pub fn key_event_matches_combo(key: &KeyEvent, combo: KeyCombo) -> bool {
 }
 
 pub fn terminal_key_matches_combo(key: &TerminalKey, combo: KeyCombo) -> bool {
-    key_parts_match_combo(key.code, key.modifiers, key.shifted_codepoint, combo)
+    if key_parts_match_combo(key.code, key.modifiers, key.shifted_codepoint, combo) {
+        return true;
+    }
+    // Hangul mode reports Ctrl+A as Ctrl+ㅁ. Kitty may also include the US
+    // base-layout key. Fold those to the ASCII letter only while Ctrl is held,
+    // so plain Hangul typing still reaches the pane.
+    let Some(alias) = key.ctrl_ascii_alias() else {
+        return false;
+    };
+    key_parts_match_combo(KeyCode::Char(alias), key.modifiers, None, combo)
 }
 
 fn key_parts_match_combo(
@@ -1593,6 +1602,56 @@ mod tests {
             parse_key_combo("alt+é"),
             Some((KeyCode::Char('é'), KeyModifiers::ALT))
         );
+    }
+
+    #[test]
+    fn ctrl_hangul_jamo_matches_same_physical_ctrl_letter() {
+        let ctrl_a = parse_key_combo("ctrl+a").unwrap();
+        let ctrl_shift_r = parse_key_combo("ctrl+shift+r").unwrap();
+        let ctrl_alt_n = parse_key_combo("ctrl+alt+n").unwrap();
+
+        assert!(terminal_key_matches_combo(
+            &TerminalKey::new(KeyCode::Char('ㅁ'), KeyModifiers::CONTROL),
+            ctrl_a,
+        ));
+        assert!(terminal_key_matches_combo(
+            &TerminalKey::new(
+                KeyCode::Char('ㄲ'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            ),
+            ctrl_shift_r,
+        ));
+        assert!(terminal_key_matches_combo(
+            &TerminalKey::new(
+                KeyCode::Char('ㅜ'),
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+            ),
+            ctrl_alt_n,
+        ));
+        assert!(!terminal_key_matches_combo(
+            &TerminalKey::new(KeyCode::Char('ㅁ'), KeyModifiers::empty()),
+            ctrl_a,
+        ));
+        assert!(!terminal_key_matches_combo(
+            &TerminalKey::new(KeyCode::Char('ㅁ'), KeyModifiers::SHIFT),
+            ctrl_a,
+        ));
+        assert!(!terminal_key_matches_combo(
+            &TerminalKey::new(KeyCode::Char('ㅜ'), KeyModifiers::empty()),
+            parse_key_combo("n").unwrap(),
+        ));
+    }
+
+    #[test]
+    fn kitty_ctrl_mieum_base_layout_matches_ctrl_a() {
+        let key = crate::input::parse_terminal_key_sequence("\x1b[12609::97;5u").unwrap();
+        assert_eq!(key.code, KeyCode::Char('ㅁ'));
+        assert_eq!(key.modifiers, KeyModifiers::CONTROL);
+        assert_eq!(key.base_layout_codepoint, Some(u32::from(b'a')));
+        assert!(terminal_key_matches_combo(
+            &key,
+            parse_key_combo("ctrl+a").unwrap(),
+        ));
     }
 
     #[test]
