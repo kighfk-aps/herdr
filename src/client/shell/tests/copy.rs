@@ -2308,3 +2308,99 @@ fn copy_mode_repeat_during_projection_gap_stays_active() {
         );
     }
 }
+
+fn copy_mode_state_with_scrollback() -> ClientShellState {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.config.copy_on_select = false;
+    state.set_snapshot(Box::new(snapshot()));
+    let mut pane_surface = surface();
+    pane_surface.panes[0].scroll = Some(crate::protocol::PaneSurfaceScrollMetrics {
+        offset_from_bottom: 0,
+        max_offset_from_bottom: 200,
+        viewport_rows: 10,
+    });
+    state.set_pane_surface(pane_surface);
+    state.compose(106, 20).expect("composed frame");
+    let mut enter = ClientShellInput::default();
+    state.record_binding(
+        crate::input::KeybindMatch::Action(crate::input::KeybindAction::CopyMode),
+        &mut enter,
+    );
+    assert_eq!(state.mode, ClientShellMode::Copy);
+    state
+}
+
+#[test]
+fn copy_mode_page_chords_work_while_hangul_is_active() {
+    // Ctrl+B is the default prefix, so only the other page chords reach copy mode.
+    let run = |ch: char| {
+        let mut state = copy_mode_state_with_scrollback();
+        let output = state.handle_raw_events(vec![RawInputEvent::Key(
+            crate::input::TerminalKey::new(KeyCode::Char(ch), KeyModifiers::CONTROL),
+        )]);
+        let scrolls: Vec<_> = output
+            .actions
+            .iter()
+            .filter_map(|action| match action {
+                ClientShellAction::Endpoint { request, .. } => match &request.method {
+                    crate::api::schema::Method::PaneScroll(params) => {
+                        Some(params.offset_from_bottom)
+                    }
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        (
+            state.copy_mode.as_ref().map(|mode| mode.cursor.row),
+            scrolls,
+        )
+    };
+    let untouched = run('x');
+
+    for (ascii, jamo) in [('u', 'ㅕ'), ('d', 'ㅇ'), ('f', 'ㄹ')] {
+        let expected = run(ascii);
+        assert_ne!(expected, untouched, "Ctrl+{ascii} should move copy mode");
+        assert_eq!(
+            run(jamo),
+            expected,
+            "Ctrl+{jamo} should act like Ctrl+{ascii}"
+        );
+    }
+}
+
+#[test]
+fn navigator_ctrl_chords_work_while_hangul_is_active() {
+    let selected_after = |chords: &[char], search_focused: bool| {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.set_snapshot(Box::new(snapshot()));
+        state.set_pane_surface(surface());
+        state.open_navigator_overlay();
+        if let Some(ClientShellOverlay::Navigator(navigator)) = state.overlay.as_mut() {
+            navigator.search_focused = search_focused;
+        }
+        for ch in chords {
+            state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+                KeyCode::Char(*ch),
+                KeyModifiers::CONTROL,
+            ))]);
+        }
+        let Some(ClientShellOverlay::Navigator(navigator)) = state.overlay.as_ref() else {
+            panic!("navigator should stay open");
+        };
+        navigator.selected.clone()
+    };
+    let initial = selected_after(&[], false);
+
+    // The current row starts at the bottom, so Ctrl+U moves first and Ctrl+D returns.
+    let up = selected_after(&['u'], false);
+    assert_ne!(up, initial, "Ctrl+U should move the selection");
+    assert_eq!(selected_after(&['ㅕ'], false), up);
+    assert_eq!(selected_after(&['ㅕ', 'ㅇ'], false), initial);
+
+    // Search mode: Ctrl+P / Ctrl+N step through the matches.
+    let previous = selected_after(&['p'], true);
+    assert_ne!(previous, initial, "Ctrl+P should move the selection");
+    assert_eq!(selected_after(&['ㅔ'], true), previous);
+    assert_eq!(selected_after(&['ㅔ', 'ㅜ'], true), initial);
+}

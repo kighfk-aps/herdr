@@ -159,6 +159,16 @@ impl TerminalKey {
             .then(|| base.to_ascii_lowercase())
     }
 
+    /// Rewrites a Hangul-mode Ctrl chord to the ASCII key on the same physical
+    /// key, for handlers that compare `KeyCode::Char('u')` directly instead of
+    /// going through `terminal_key_matches_combo`. Other keys are unchanged.
+    pub(crate) fn with_ctrl_ascii_folded(mut self) -> Self {
+        if let Some(alias) = self.ctrl_ascii_alias() {
+            self.code = KeyCode::Char(alias);
+        }
+        self
+    }
+
     pub(crate) fn with_generated_text(mut self, text: Option<String>) -> Self {
         self.generated_text = if self.kind == crossterm::event::KeyEventKind::Release {
             None
@@ -460,6 +470,42 @@ mod tests {
         assert!(matches!(key.identity(), KeyIdentity::Physical(_)));
         assert_ne!(key.identity(), enhanced.identity());
         assert_eq!(key.code, KeyCode::Esc);
+    }
+
+    #[test]
+    fn ctrl_ascii_folded_rewrites_only_hangul_ctrl_chords() {
+        let folded =
+            TerminalKey::new(KeyCode::Char('ㅓ'), KeyModifiers::CONTROL).with_ctrl_ascii_folded();
+        assert_eq!(folded.code, KeyCode::Char('j'));
+        assert_eq!(folded.modifiers, KeyModifiers::CONTROL);
+
+        let shifted = TerminalKey::new(
+            KeyCode::Char('ㄲ'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )
+        .with_ctrl_ascii_folded();
+        assert_eq!(shifted.code, KeyCode::Char('r'));
+        assert_eq!(
+            shifted.modifiers,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        );
+
+        let based = TerminalKey::new(KeyCode::Char('ж'), KeyModifiers::CONTROL)
+            .with_base_layout_codepoint(u32::from(b'u'))
+            .with_ctrl_ascii_folded();
+        assert_eq!(based.code, KeyCode::Char('u'));
+
+        for untouched in [
+            TerminalKey::new(KeyCode::Char('ㅓ'), KeyModifiers::empty()),
+            TerminalKey::new(KeyCode::Char('ㅓ'), KeyModifiers::ALT),
+            TerminalKey::new(KeyCode::Char('j'), KeyModifiers::CONTROL),
+            TerminalKey::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        ] {
+            assert_eq!(
+                untouched.clone().with_ctrl_ascii_folded().code,
+                untouched.code
+            );
+        }
     }
 
     #[test]

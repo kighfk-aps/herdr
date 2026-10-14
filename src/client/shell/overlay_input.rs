@@ -477,6 +477,7 @@ impl ClientShellState {
     ) {
         use crossterm::event::KeyModifiers;
 
+        let key = &key.clone().with_ctrl_ascii_folded();
         if matches!(self.overlay, Some(ClientShellOverlay::Onboarding)) {
             if matches!(
                 key.code,

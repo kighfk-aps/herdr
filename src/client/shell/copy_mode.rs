@@ -106,6 +106,7 @@ impl ClientShellState {
         key: &crate::input::TerminalKey,
         outcome: &mut ClientShellInput,
     ) {
+        let key = &key.clone().with_ctrl_ascii_folded();
         if self.route_copy_search_prompt_key(key, outcome) {
             return;
         }

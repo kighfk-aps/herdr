@@ -256,9 +256,7 @@ fn try_encode_csi_u(key: &TerminalKey, flags: u16) -> Option<Vec<u8>> {
             // Hangul mode reports the jamo for the physical key (Ctrl+ㅓ is
             // the Ctrl+J key). Encode the ASCII alias so the pane's child
             // receives the control chord it expects.
-            let c = key
-                .ctrl_ascii_alias()
-                .unwrap_or(c);
+            let c = key.ctrl_ascii_alias().unwrap_or(c);
             let base = canonical_kitty_char(c, mods);
             let shifted = alternate_shifted_codepoint(key, flags);
             (base as u32, shifted)

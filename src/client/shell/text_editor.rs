@@ -169,6 +169,7 @@ impl TextEditor {
         }
         let previous_len = self.text.len();
         let mut content_changed = false;
+        let key = &key.clone().with_ctrl_ascii_folded();
         let (code, modifiers) = crate::config::normalize_key_combo((key.code, key.modifiers));
         // Explicit text from the host is authoritative, including AltGr/composition.
         if let Some(text) = key
@@ -347,6 +348,46 @@ mod tests {
             let mut empty = TextEditor::default();
             key(&mut empty, code, modifiers);
         }
+    }
+
+    #[test]
+    fn hangul_ctrl_chords_edit_like_their_ascii_keys() {
+        // Korean 2-set Hangul mode reports the jamo on the physical key.
+        for (ascii, jamo) in [
+            ('b', 'ㅠ'),
+            ('f', 'ㄹ'),
+            ('a', 'ㅁ'),
+            ('e', 'ㄷ'),
+            ('h', 'ㅗ'),
+            ('d', 'ㅇ'),
+            ('u', 'ㅕ'),
+            ('k', 'ㅏ'),
+            ('w', 'ㅈ'),
+            ('y', 'ㅛ'),
+        ] {
+            let ctrl = KeyModifiers::CONTROL;
+            let mut expected = TextEditor::from("one two");
+            expected.cursor = 4;
+            key(&mut expected, KeyCode::Char(ascii), ctrl);
+
+            let mut editor = TextEditor::from("one two");
+            editor.cursor = 4;
+            key(&mut editor, KeyCode::Char(jamo), ctrl);
+
+            assert_eq!(
+                (editor.as_str(), editor.cursor, editor.killed.as_str()),
+                (expected.as_str(), expected.cursor, expected.killed.as_str()),
+                "Ctrl+{jamo} should act like Ctrl+{ascii}"
+            );
+        }
+    }
+
+    #[test]
+    fn plain_hangul_typing_still_inserts_text() {
+        let mut editor = TextEditor::from("one two");
+        editor.cursor = 4;
+        key(&mut editor, KeyCode::Char('ㅕ'), KeyModifiers::NONE);
+        assert_eq!(editor.as_str(), "one ㅕtwo");
     }
 
     #[test]
